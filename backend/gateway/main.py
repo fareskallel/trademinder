@@ -2,33 +2,28 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
 
-app = FastAPI(title="TraderMind Gateway")
+from config import settings
 
-# URL of the Orchestrator service.
-# For now, orchestrator will run on port 8001 locally.
-ORCHESTRATOR_URL = "http://127.0.0.1:8001"
+app = FastAPI(title="TraderMind Gateway")
 
 
 class ChatRequest(BaseModel):
-    """
-    Request body for the public /chat endpoint.
-    This is what frontend or external clients will send.
-    """
     message: str
 
 
 class ChatResponse(BaseModel):
-    """
-    Standardized response sent back to the frontend.
-    """
     response: str
+
+
+def get_orchestrator_url() -> str:
+    """
+    Build the orchestrator base URL from configuration.
+    """
+    return f"http://{settings.orchestrator_host}:{settings.orchestrator_port}"
 
 
 @app.get("/health")
 def health():
-    """
-    Health-check for the Gateway service.
-    """
     return {"status": "ok", "service": "gateway"}
 
 
@@ -38,23 +33,18 @@ async def chat(req: ChatRequest):
     Public /chat endpoint.
 
     Flow:
-    - Receives a chat request from the frontend.
+    - Receives a message from the client.
     - Forwards it to the Orchestrator /chat endpoint.
-    - Returns the orchestrator's response as-is.
-
-    The gateway stays "thin":
-    - It does not contain business logic.
-    - It only validates input and proxies requests internally.
     """
+    orchestrator_url = get_orchestrator_url()
 
     async with httpx.AsyncClient() as client:
         orchestrator_response = await client.post(
-            f"{ORCHESTRATOR_URL}/chat",
+            f"{orchestrator_url}/chat",
             json={"message": req.message},
             timeout=10.0,
         )
 
     orchestrator_response.raise_for_status()
     data = orchestrator_response.json()
-
     return ChatResponse(response=data.get("response", "No response from orchestrator"))
