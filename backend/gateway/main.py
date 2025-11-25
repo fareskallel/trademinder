@@ -1,7 +1,11 @@
+# backend/gateway/main.py
+
+from datetime import datetime
+from typing import List, Optional
+
+import httpx
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Optional
-import httpx
 
 from config import settings
 
@@ -26,6 +30,23 @@ class JournalAnalysisResponse(BaseModel):
     rules_broken: List[str]
     biases: List[str]
     advice: str
+
+
+class JournalEntryOut(BaseModel):
+    id: int
+    text: str
+    emotions: List[str]
+    rules_broken: List[str]
+    biases: List[str]
+    advice: str
+    created_at: datetime
+
+
+class JournalEntryListItem(BaseModel):
+    id: int
+    text: str
+    emotions: List[str]
+    created_at: datetime
 
 
 def get_orchestrator_url() -> str:
@@ -68,10 +89,7 @@ async def analyze_journal(req: JournalAnalysisRequest):
     """
     Public journal analysis endpoint.
 
-    Flow:
-    - Accepts raw journal text from the client.
-    - Forwards it to Orchestrator /journal/analyze.
-    - Returns structured analysis JSON.
+    Forwards to Orchestrator /journal/analyze.
     """
     orchestrator_url = get_orchestrator_url()
 
@@ -85,3 +103,41 @@ async def analyze_journal(req: JournalAnalysisRequest):
     orchestrator_response.raise_for_status()
     data = orchestrator_response.json()
     return JournalAnalysisResponse(**data)
+
+
+@app.post("/journal/save", response_model=JournalEntryOut)
+async def save_journal(req: JournalAnalysisRequest):
+    """
+    Analyze and save a journal entry via the orchestrator.
+    """
+    orchestrator_url = get_orchestrator_url()
+
+    async with httpx.AsyncClient() as client:
+        orchestrator_response = await client.post(
+            f"{orchestrator_url}/journal/save",
+            json=req.model_dump(),
+            timeout=10.0,
+        )
+
+    orchestrator_response.raise_for_status()
+    data = orchestrator_response.json()
+    return JournalEntryOut(**data)
+
+
+@app.get("/journal", response_model=List[JournalEntryListItem])
+async def list_journals(limit: int = 20):
+    """
+    List recent journal entries via the orchestrator.
+    """
+    orchestrator_url = get_orchestrator_url()
+
+    async with httpx.AsyncClient() as client:
+        orchestrator_response = await client.get(
+            f"{orchestrator_url}/journal",
+            params={"limit": limit},
+            timeout=10.0,
+        )
+
+    orchestrator_response.raise_for_status()
+    data = orchestrator_response.json()
+    return [JournalEntryListItem(**item) for item in data]
