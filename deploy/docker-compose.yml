@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  gateway:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: trademind_gateway
+    environment:
+      # Gateway talks to orchestrator via its service name on the Docker network
+      ORCHESTRATOR_HOST: "orchestrator"
+      ORCHESTRATOR_PORT: "8001"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - orchestrator
+
+  orchestrator:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: trademind_orchestrator
+    command: ["uvicorn", "orchestrator.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      # Orchestrator talks to LLM service via its service name
+      LLM_HOST: "llm_service"
+      LLM_PORT: "8002"
+    depends_on:
+      - llm_service
+    # Persist the SQLite DB file on the host so data survives restarts
+    volumes:
+      - ../backend/trademind.db:/app/trademind.db
+
+  llm_service:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: trademind_llm_service
+    command: ["uvicorn", "llm_service.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    environment:
+      # Not strictly needed, but available if you ever read LLM_HOST inside this service
+      LLM_HOST: "0.0.0.0"
+      LLM_PORT: "8002"
