@@ -67,9 +67,9 @@ curl -X POST "http://127.0.0.1:8000/journal/save" \
         "text": "I overtraded and entered too early on gold.",
         "context": "FTMO challenge"
       }'
+      
 Response (example)
-json
-Copy code
+
 {
   "id": 1,
   "text": "I overtraded and entered too early on gold.",
@@ -79,14 +79,13 @@ Copy code
   "advice": "Set a maximum number of trades per day and wait for confirmation.",
   "created_at": "2025-02-14T19:55:12.420Z"
 }
+
 4. Example: List Entries
-bash
-Copy code
+
 curl "http://127.0.0.1:8000/journal?limit=5"
+
 Returns:
 
-json
-Copy code
 [
   {
     "id": 1,
