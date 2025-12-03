@@ -15,7 +15,7 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------
-# CORS (so frontend http://localhost:5173 can call it)
+# CORS
 # ---------------------------------------------------------
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -29,23 +29,23 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# Models (mirroring orchestrator)
+# Models (mirror orchestrator)
 # ---------------------------------------------------------
 
 
-class JournalAnalyzeRequest(BaseModel):
+class FeedbackAnalyzeRequest(BaseModel):
     text: str
     context: Optional[str] = None
 
 
-class JournalAnalysis(BaseModel):
+class FeedbackAnalysis(BaseModel):
     emotions: List[str]
     rules_broken: List[str]
     biases: List[str]
     advice: str
 
 
-class JournalEntryResponse(BaseModel):
+class FeedbackEntryResponse(BaseModel):
     id: int
     text: str
     context: Optional[str]
@@ -53,7 +53,7 @@ class JournalEntryResponse(BaseModel):
     rules_broken: List[str]
     biases: List[str]
     advice: str
-    created_at: str  # orchestrator sends ISO datetime; we keep it as string at gateway
+    created_at: str  # orchestrator sends ISO datetime; keep as string here
 
 
 # ---------------------------------------------------------
@@ -70,7 +70,6 @@ async def _post_to_orchestrator(path: str, payload: dict) -> dict:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            # Bubble up as a 502
             raise HTTPException(
                 status_code=502,
                 detail=f"Error calling orchestrator at {url}: {e}",
@@ -105,31 +104,30 @@ async def health():
     }
 
 
-@app.post("/journal/analyze", response_model=JournalAnalysis)
-async def analyze_journal(req: JournalAnalyzeRequest):
+@app.post("/feedback/analyze", response_model=FeedbackAnalysis)
+async def analyze_feedback(req: FeedbackAnalyzeRequest):
     """
-    Public endpoint → forwards to orchestrator /journal/analyze
+    Public endpoint → forwards to orchestrator /feedback/analyze
     (no DB write).
     """
-    data = await _post_to_orchestrator("/journal/analyze", req.dict())
-    # Let Pydantic validate/normalize it into JournalAnalysis
-    return JournalAnalysis(**data)
+    data = await _post_to_orchestrator("/feedback/analyze", req.dict())
+    return FeedbackAnalysis(**data)
 
 
-@app.post("/journal/save", response_model=JournalEntryResponse)
-async def save_journal(req: JournalAnalyzeRequest):
+@app.post("/feedback/save", response_model=FeedbackEntryResponse)
+async def save_feedback(req: FeedbackAnalyzeRequest):
     """
-    Public endpoint → forwards to orchestrator /journal/save
+    Public endpoint → forwards to orchestrator /feedback/save
     (LLM analysis + persist to DB).
     """
-    data = await _post_to_orchestrator("/journal/save", req.dict())
-    return JournalEntryResponse(**data)
+    data = await _post_to_orchestrator("/feedback/save", req.dict())
+    return FeedbackEntryResponse(**data)
 
 
-@app.get("/journal", response_model=list[JournalEntryResponse])
-async def list_journals(limit: int = Query(10, ge=1, le=100)):
+@app.get("/feedback", response_model=list[FeedbackEntryResponse])
+async def list_feedback(limit: int = Query(10, ge=1, le=100)):
     """
-    Public endpoint → forwards to orchestrator /journal?limit=N
+    Public endpoint → forwards to orchestrator /feedback?limit=N
     """
-    data = await _get_from_orchestrator("/journal", params={"limit": limit})
-    return [JournalEntryResponse(**item) for item in data]
+    data = await _get_from_orchestrator("/feedback", params={"limit": limit})
+    return [FeedbackEntryResponse(**item) for item in data]

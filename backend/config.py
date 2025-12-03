@@ -11,15 +11,27 @@ class Settings(BaseSettings):
     - Overridden by real environment variables (if set)
     """
 
-    # Orchestrator service configuration
+    # -----------------------------------------------------
+    # Gateway → Orchestrator
+    # -----------------------------------------------------
     orchestrator_host: str = "127.0.0.1"
     orchestrator_port: int = 8001
 
-    # LLM service configuration
+    # -----------------------------------------------------
+    # Orchestrator → Feedback Service
+    # -----------------------------------------------------
+    feedback_service_host: str = "127.0.0.1"
+    feedback_service_port: int = 8003  # choose any free port
+
+    # -----------------------------------------------------
+    # Feedback Service → LLM Service
+    # -----------------------------------------------------
     llm_host: str = "127.0.0.1"
     llm_port: int = 8002
 
-    # Pydantic v2 config: tells it to load from .env, etc.
+    # -----------------------------------------------------
+    # Pydantic settings
+    # -----------------------------------------------------
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

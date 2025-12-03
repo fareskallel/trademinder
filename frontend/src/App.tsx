@@ -1,8 +1,9 @@
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 
 const API_BASE_URL = "http://localhost:8000";
 
-type JournalEntry = {
+type FeedbackEntry = {
   id: number;
   text: string;
   context?: string | null;
@@ -13,7 +14,7 @@ type JournalEntry = {
   created_at?: string;
 };
 
-type AnalyzeResponse = JournalEntry;
+type AnalyzeResponse = FeedbackEntry;
 type Theme = "light" | "dark";
 
 function App() {
@@ -22,16 +23,16 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<AnalyzeResponse | null>(null);
-  const [entries, setEntries] = useState<JournalEntry[]>([]);
+  const [entries, setEntries] = useState<FeedbackEntry[]>([]);
   const [theme, setTheme] = useState<Theme>("light");
 
-  // Load recent entries on mount
+  // Load recent feedback entries on mount
   useEffect(() => {
     const fetchEntries = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/journal?limit=10`);
+        const res = await fetch(`${API_BASE_URL}/feedback?limit=10`);
         if (!res.ok) {
-          throw new Error(`Failed to fetch entries: ${res.status}`);
+          throw new Error(`Failed to fetch feedback: ${res.status}`);
         }
         const data = await res.json();
         setEntries(data);
@@ -61,13 +62,13 @@ function App() {
     setError(null);
 
     if (!text.trim()) {
-      setError("Please write something about your trading day.");
+      setError("Please write something about your trading session.");
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/journal/save`, {
+      const res = await fetch(`${API_BASE_URL}/feedback/save`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -175,7 +176,7 @@ function App() {
                 marginBottom: "0.25rem",
               }}
             >
-              TraderMind OS – Journal Analyzer
+              TraderMind OS – Session Feedback
             </h1>
             <p
               style={{
@@ -184,8 +185,8 @@ function App() {
                 fontSize: "0.98rem",
               }}
             >
-              Log your trading day, get structured feedback, and build awareness
-              of your habits over time.
+              Write about your trading session, get structured feedback, and
+              build awareness of your habits over time.
             </p>
           </div>
           <button
@@ -236,7 +237,7 @@ function App() {
                   marginBottom: "0.75rem",
                 }}
               >
-                New journal entry
+                New session feedback
               </h2>
               <form onSubmit={handleSubmit}>
                 <label
@@ -247,7 +248,7 @@ function App() {
                     fontSize: "0.95rem",
                   }}
                 >
-                  Journal entry
+                  What happened this session?
                 </label>
                 <textarea
                   value={text}
@@ -351,7 +352,7 @@ function App() {
                     marginBottom: "0.75rem",
                   }}
                 >
-                  Latest analysis
+                  Latest feedback analysis
                 </h2>
                 <p
                   style={{
@@ -405,7 +406,7 @@ function App() {
             )}
           </div>
 
-          {/* Right side: recent entries */}
+          {/* Right side: recent feedback entries */}
           <div>
             <section
               style={{
@@ -424,11 +425,11 @@ function App() {
                   marginBottom: "0.75rem",
                 }}
               >
-                Recent entries
+                Recent feedback
               </h2>
               {entries.length === 0 ? (
                 <p style={{ color: colors.softer, fontSize: "0.95rem" }}>
-                  No entries yet. Write your first journal entry on the left.
+                  No feedback yet. Write about your trading session on the left.
                 </p>
               ) : (
                 <ul
@@ -461,9 +462,7 @@ function App() {
                         <strong>#{entry.id}</strong>{" "}
                         <span>
                           {entry.created_at
-                            ? new Date(
-                                entry.created_at
-                              ).toLocaleString()
+                            ? new Date(entry.created_at).toLocaleString()
                             : ""}
                         </span>
                       </p>

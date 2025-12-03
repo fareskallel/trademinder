@@ -15,10 +15,7 @@ app = FastAPI(
 # Config
 # -----------------------------
 
-# When running locally (without Docker), Ollama is at localhost:11434
-# When running inside Docker, we'll override this with host.docker.internal via env.
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-# Default model is llama3.2, can be overridden via env if needed.
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
 
@@ -35,12 +32,12 @@ class GenerateResponse(BaseModel):
     text: str
 
 
-class JournalAnalyzeRequest(BaseModel):
+class FeedbackAnalyzeRequest(BaseModel):
     text: str
     context: Optional[str] = None
 
 
-class JournalAnalysis(BaseModel):
+class FeedbackAnalysis(BaseModel):
     emotions: List[str]
     rules_broken: List[str]
     biases: List[str]
@@ -53,12 +50,6 @@ class JournalAnalysis(BaseModel):
 
 
 async def call_ollama(prompt: str, *, format: Optional[Any] = None) -> str:
-    """
-    Call Ollama's /api/generate endpoint and return the raw text response.
-
-    If `format` is provided (e.g. "json"),
-    Ollama will try to enforce that output format.
-    """
     url = f"{OLLAMA_BASE_URL}/api/generate"
     payload: dict = {
         "model": OLLAMA_MODEL,
@@ -73,15 +64,10 @@ async def call_ollama(prompt: str, *, format: Optional[Any] = None) -> str:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
-        # Ollama's response JSON has a "response" field containing the generated text.
         return data.get("response", "").strip()
 
 
 def extract_json_block(text: str) -> str:
-    """
-    Try to extract a JSON object from a larger text response.
-    This is defensive: if the model adds extra text, we still try to parse the JSON.
-    """
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -89,11 +75,7 @@ def extract_json_block(text: str) -> str:
     return text[start : end + 1]
 
 
-def fallback_analysis(entry_text: str) -> JournalAnalysis:
-    """
-    Simple backup if the LLM JSON parsing fails.
-    Better than crashing.
-    """
+def fallback_analysis(entry_text: str) -> FeedbackAnalysis:
     lowered = entry_text.lower()
     emotions: List[str] = []
     rules: List[str] = []
@@ -120,7 +102,7 @@ def fallback_analysis(entry_text: str) -> JournalAnalysis:
         "and write them somewhere visible before each session."
     )
 
-    return JournalAnalysis(
+    return FeedbackAnalysis(
         emotions=emotions,
         rules_broken=rules,
         biases=biases,
@@ -145,10 +127,6 @@ async def health():
 
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(req: GenerateRequest):
-    """
-    Generic text generation endpoint.
-    Currently not used heavily, but kept for future features.
-    """
     try:
         result = await call_ollama(req.prompt)
     except httpx.HTTPError as e:
@@ -157,18 +135,16 @@ async def generate(req: GenerateRequest):
     return GenerateResponse(text=result)
 
 
-@app.post("/journal/analyze", response_model=JournalAnalysis)
-async def analyze_journal(req: JournalAnalyzeRequest):
+@app.post("/feedback/analyze", response_model=FeedbackAnalysis)
+async def analyze_feedback(req: FeedbackAnalyzeRequest):
     """
-    Main endpoint used by the orchestrator for journal analysis.
+    Main endpoint used by feedback_service for feedback analysis.
     We prompt the LLM to return STRICT JSON with the desired schema.
-    With llama3.2 + Ollama's `format="json"`, we get more reliable JSON.
     """
-    # Build a strong prompt asking for JSON-only output
     base_instruction = """
 You are a trading psychology and risk management coach.
 
-You will receive a trading journal entry and optional context.
+You will receive a trading session feedback entry and optional context.
 Your task is to analyze it and respond ONLY with valid JSON.
 Do not add any commentary or text outside the JSON.
 
@@ -187,7 +163,7 @@ The JSON MUST have the following structure:
 - advice: a short, concrete paragraph with practical suggestions
 """
 
-    entry_part = f'\nJournal entry:\n"""\n{req.text}\n"""'
+    entry_part = f'\nFeedback entry:\n"""\n{req.text}\n"""'
     context_part = (
         f'\nContext:\n"""\n{req.context}\n"""'
         if req.context
@@ -198,11 +174,9 @@ The JSON MUST have the following structure:
 
     raw_response: str = ""
     try:
-        # Ask Ollama/llama3.2 to return strict JSON
         raw_response = await call_ollama(full_prompt, format="json")
         parsed = json.loads(raw_response)
     except Exception:
-        # As a last resort, try to salvage a JSON block from a noisy response
         try:
             if raw_response:
                 json_str = extract_json_block(raw_response)
@@ -218,7 +192,6 @@ The JSON MUST have the following structure:
     biases = parsed.get("biases", [])
     advice = parsed.get("advice", "")
 
-    # Ensure types
     if not isinstance(emotions, list):
         emotions = [str(emotions)]
     if not isinstance(rules_broken, list):
@@ -227,7 +200,7 @@ The JSON MUST have the following structure:
         biases = [str(biases)]
     advice = str(advice)
 
-    return JournalAnalysis(
+    return FeedbackAnalysis(
         emotions=[str(e) for e in emotions],
         rules_broken=[str(r) for r in rules_broken],
         biases=[str(b) for b in biases],

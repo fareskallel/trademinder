@@ -6,12 +6,12 @@ services:
       context: ../backend
       dockerfile: Dockerfile
     container_name: trademind_gateway
+    command: uvicorn gateway.main:app --host 0.0.0.0 --port 8000
     environment:
-      # Gateway talks to orchestrator via its service name on the Docker network
-      ORCHESTRATOR_HOST: "orchestrator"
-      ORCHESTRATOR_PORT: "8001"
+      - ORCHESTRATOR_HOST=orchestrator
+      - ORCHESTRATOR_PORT=8001
     ports:
-      - "8000:8000"
+      - "8000:8000"        # host:container
     depends_on:
       - orchestrator
 
@@ -20,24 +20,38 @@ services:
       context: ../backend
       dockerfile: Dockerfile
     container_name: trademind_orchestrator
-    command: ["uvicorn", "orchestrator.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    command: uvicorn orchestrator.main:app --host 0.0.0.0 --port 8001
     environment:
-      # Orchestrator talks to LLM service via its service name
-      LLM_HOST: "llm_service"
-      LLM_PORT: "8002"
+      - FEEDBACK_SERVICE_HOST=feedback_service
+      - FEEDBACK_SERVICE_PORT=8000
+    ports:
+      - "8001:8001"        # optional, for debugging
+    depends_on:
+      - feedback_service
+
+  feedback_service:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: trademind_feedback_service
+    command: uvicorn feedback_service.main:app --host 0.0.0.0 --port 8000
+    environment:
+      - LLM_HOST=llm_service
+      - LLM_PORT=8000
+      - DATABASE_URL=sqlite:////app/trademind.db
+    ports:
+      - "8003:8000"        # optional, for debugging (host 8003 → container 8000)
     depends_on:
       - llm_service
-    # Persist the SQLite DB file on the host so data survives restarts
-    volumes:
-      - ../backend/trademind.db:/app/trademind.db
 
   llm_service:
     build:
       context: ../backend
       dockerfile: Dockerfile
     container_name: trademind_llm_service
-    command: ["uvicorn", "llm_service.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    command: uvicorn llm_service.main:app --host 0.0.0.0 --port 8000
     environment:
-      # Not strictly needed, but available if you ever read LLM_HOST inside this service
-      LLM_HOST: "0.0.0.0"
-      LLM_PORT: "8002"
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3.2
+    ports:
+      - "8002:8000"        # host 8002 → LLM container 8000
