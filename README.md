@@ -85,3 +85,7 @@ Build a production-grade trading psychology and analytics platform while learnin
 - FE/BE communication  
 
 TraderMind OS is both a real product and a complete backend engineering learning journey.
+
+## License
+This project is released under the Business Source License 1.1 (BUSL-1.1).
+Commercial use is prohibited without a written license from the author.
