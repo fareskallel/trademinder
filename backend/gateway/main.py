@@ -1,157 +1,135 @@
-# backend/gateway/main.py
-
-from datetime import datetime
 from typing import List, Optional
+import os
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from config import settings
 
-from fastapi.middleware.cors import CORSMiddleware
+app = FastAPI(
+    title="TraderMind Gateway",
+    description="Public API gateway for TraderMind OS.",
+    version="0.3.0",
+)
 
-app = FastAPI(title="TraderMind Gateway")
+# ---------------------------------------------------------
+# CORS (so frontend http://localhost:5173 can call it)
+# ---------------------------------------------------------
 
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[FRONTEND_URL, "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class ChatRequest(BaseModel):
-    message: str
+# ---------------------------------------------------------
+# Models (mirroring orchestrator)
+# ---------------------------------------------------------
 
 
-class ChatResponse(BaseModel):
-    response: str
-
-
-class JournalAnalysisRequest(BaseModel):
+class JournalAnalyzeRequest(BaseModel):
     text: str
     context: Optional[str] = None
 
 
-class JournalAnalysisResponse(BaseModel):
+class JournalAnalysis(BaseModel):
     emotions: List[str]
     rules_broken: List[str]
     biases: List[str]
     advice: str
 
 
-class JournalEntryOut(BaseModel):
+class JournalEntryResponse(BaseModel):
     id: int
     text: str
+    context: Optional[str]
     emotions: List[str]
     rules_broken: List[str]
     biases: List[str]
     advice: str
-    created_at: datetime
+    created_at: str  # orchestrator sends ISO datetime; we keep it as string at gateway
 
 
-class JournalEntryListItem(BaseModel):
-    id: int
-    text: str
-    emotions: List[str]
-    created_at: datetime
+# ---------------------------------------------------------
+# Helper: orchestrator base URL
+# ---------------------------------------------------------
+
+ORCH_BASE = f"http://{settings.orchestrator_host}:{settings.orchestrator_port}"
 
 
-def get_orchestrator_url() -> str:
-    """
-    Build the orchestrator base URL from configuration.
-    """
-    return f"http://{settings.orchestrator_host}:{settings.orchestrator_port}"
+async def _post_to_orchestrator(path: str, payload: dict) -> dict:
+    url = f"{ORCH_BASE}{path}"
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            # Bubble up as a 502
+            raise HTTPException(
+                status_code=502,
+                detail=f"Error calling orchestrator at {url}: {e}",
+            ) from e
+    return resp.json()
+
+
+async def _get_from_orchestrator(path: str, params: dict | None = None) -> list[dict]:
+    url = f"{ORCH_BASE}{path}"
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Error calling orchestrator at {url}: {e}",
+            ) from e
+    return resp.json()
+
+
+# ---------------------------------------------------------
+# Routes
+# ---------------------------------------------------------
 
 
 @app.get("/health")
-def health():
-    return {"status": "ok", "service": "gateway"}
+async def health():
+    return {
+        "status": "ok",
+        "service": "gateway",
+    }
 
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+@app.post("/journal/analyze", response_model=JournalAnalysis)
+async def analyze_journal(req: JournalAnalyzeRequest):
     """
-    Public /chat endpoint.
-
-    Flow:
-    - Receives a message from the client.
-    - Forwards it to the Orchestrator /chat endpoint.
+    Public endpoint → forwards to orchestrator /journal/analyze
+    (no DB write).
     """
-    orchestrator_url = get_orchestrator_url()
-
-    async with httpx.AsyncClient() as client:
-        orchestrator_response = await client.post(
-            f"{orchestrator_url}/chat",
-            json={"message": req.message},
-            timeout=10.0,
-        )
-
-    orchestrator_response.raise_for_status()
-    data = orchestrator_response.json()
-    return ChatResponse(response=data.get("response", "No response from orchestrator"))
+    data = await _post_to_orchestrator("/journal/analyze", req.dict())
+    # Let Pydantic validate/normalize it into JournalAnalysis
+    return JournalAnalysis(**data)
 
 
-@app.post("/journal/analyze", response_model=JournalAnalysisResponse)
-async def analyze_journal(req: JournalAnalysisRequest):
+@app.post("/journal/save", response_model=JournalEntryResponse)
+async def save_journal(req: JournalAnalyzeRequest):
     """
-    Public journal analysis endpoint.
-
-    Forwards to Orchestrator /journal/analyze.
+    Public endpoint → forwards to orchestrator /journal/save
+    (LLM analysis + persist to DB).
     """
-    orchestrator_url = get_orchestrator_url()
-
-    async with httpx.AsyncClient() as client:
-        orchestrator_response = await client.post(
-            f"{orchestrator_url}/journal/analyze",
-            json=req.model_dump(),
-            timeout=10.0,
-        )
-
-    orchestrator_response.raise_for_status()
-    data = orchestrator_response.json()
-    return JournalAnalysisResponse(**data)
+    data = await _post_to_orchestrator("/journal/save", req.dict())
+    return JournalEntryResponse(**data)
 
 
-@app.post("/journal/save", response_model=JournalEntryOut)
-async def save_journal(req: JournalAnalysisRequest):
+@app.get("/journal", response_model=list[JournalEntryResponse])
+async def list_journals(limit: int = Query(10, ge=1, le=100)):
     """
-    Analyze and save a journal entry via the orchestrator.
+    Public endpoint → forwards to orchestrator /journal?limit=N
     """
-    orchestrator_url = get_orchestrator_url()
-
-    async with httpx.AsyncClient() as client:
-        orchestrator_response = await client.post(
-            f"{orchestrator_url}/journal/save",
-            json=req.model_dump(),
-            timeout=10.0,
-        )
-
-    orchestrator_response.raise_for_status()
-    data = orchestrator_response.json()
-    return JournalEntryOut(**data)
-
-
-@app.get("/journal", response_model=List[JournalEntryListItem])
-async def list_journals(limit: int = 20):
-    """
-    List recent journal entries via the orchestrator.
-    """
-    orchestrator_url = get_orchestrator_url()
-
-    async with httpx.AsyncClient() as client:
-        orchestrator_response = await client.get(
-            f"{orchestrator_url}/journal",
-            params={"limit": limit},
-            timeout=10.0,
-        )
-
-    orchestrator_response.raise_for_status()
-    data = orchestrator_response.json()
-    return [JournalEntryListItem(**item) for item in data]
+    data = await _get_from_orchestrator("/journal", params={"limit": limit})
+    return [JournalEntryResponse(**item) for item in data]

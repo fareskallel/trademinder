@@ -1,44 +1,91 @@
-# backend/orchestrator/main.py
-
+from typing import List, Optional, Generator
 from datetime import datetime
-import json
-from typing import List, Optional
 
 import httpx
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    JSON,
+    create_engine,
+    desc,
+)
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 from config import settings
-from db import Base, engine, get_db
-from models import JournalEntry
 
-app = FastAPI(title="TraderMind Orchestrator")
+# ---------------------------------------------------------
+# FastAPI app
+# ---------------------------------------------------------
+
+app = FastAPI(
+    title="TraderMind Orchestrator",
+    description="Coordinates journal analysis and persistence.",
+    version="0.3.0",
+)
+
+# ---------------------------------------------------------
+# DB setup (SQLite)
+# ---------------------------------------------------------
+
+DATABASE_URL = "sqlite:///./trademind.db"
+
+engine = create_engine(
+    DATABASE_URL, connect_args={"check_same_thread": False}
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
 
-class ChatRequest(BaseModel):
-    message: str
+class JournalEntry(Base):
+    __tablename__ = "journal_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    text = Column(Text, nullable=False)
+    context = Column(String, nullable=True)
+    emotions = Column(JSON, nullable=False)
+    rules_broken = Column(JSON, nullable=False)
+    biases = Column(JSON, nullable=False)
+    advice = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
-class ChatResponse(BaseModel):
-    response: str
+Base.metadata.create_all(bind=engine)
 
 
-class JournalAnalysisRequest(BaseModel):
+def get_db() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------
+
+
+class JournalAnalyzeRequest(BaseModel):
     text: str
     context: Optional[str] = None
 
 
-class JournalAnalysisResponse(BaseModel):
+class JournalAnalysis(BaseModel):
     emotions: List[str]
     rules_broken: List[str]
     biases: List[str]
     advice: str
 
 
-class JournalEntryOut(BaseModel):
+class JournalEntryResponse(BaseModel):
     id: int
     text: str
+    context: Optional[str]
     emotions: List[str]
     rules_broken: List[str]
     biases: List[str]
@@ -46,159 +93,151 @@ class JournalEntryOut(BaseModel):
     created_at: datetime
 
 
-class JournalEntryListItem(BaseModel):
-    id: int
-    text: str
-    emotions: List[str]
-    created_at: datetime
+# ---------------------------------------------------------
+# Helper: call LLM service
+# ---------------------------------------------------------
 
 
-def get_llm_url() -> str:
+async def call_llm_for_analysis(
+    req: JournalAnalyzeRequest,
+) -> JournalAnalysis:
     """
-    Build the LLM service base URL from configuration.
+    Call the LLM service /journal/analyze endpoint and return a JournalAnalysis.
     """
-    return f"http://{settings.llm_host}:{settings.llm_port}"
+
+    llm_url = f"http://{settings.llm_host}:{settings.llm_port}/journal/analyze"
+
+    payload = {
+        "text": req.text,
+        "context": req.context,
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(llm_url, json=payload)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Error calling LLM service: {e}",
+            ) from e
+
+    data = resp.json()
+
+    # Be defensive about types and missing fields
+    emotions = data.get("emotions", [])
+    rules_broken = data.get("rules_broken", [])
+    biases = data.get("biases", [])
+    advice = data.get("advice", "")
+
+    if not isinstance(emotions, list):
+        emotions = [str(emotions)]
+    if not isinstance(rules_broken, list):
+        rules_broken = [str(rules_broken)]
+    if not isinstance(biases, list):
+        biases = [str(biases)]
+    advice = str(advice)
+
+    return JournalAnalysis(
+        emotions=[str(e) for e in emotions],
+        rules_broken=[str(r) for r in rules_broken],
+        biases=[str(b) for b in biases],
+        advice=advice,
+    )
 
 
-@app.on_event("startup")
-def on_startup() -> None:
-    """
-    Ensure database tables exist.
-    """
-    Base.metadata.create_all(bind=engine)
+# ---------------------------------------------------------
+# Routes
+# ---------------------------------------------------------
 
 
 @app.get("/health")
-def health():
-    return {"status": "ok", "service": "orchestrator"}
+async def health():
+    return {
+        "status": "ok",
+        "service": "orchestrator",
+        "llm_host": settings.llm_host,
+        "llm_port": settings.llm_port,
+    }
 
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+@app.post("/journal/analyze", response_model=JournalAnalysis)
+async def analyze_journal(req: JournalAnalyzeRequest):
     """
-    Orchestrator-level chat endpoint.
-
-    - Builds a system prompt
-    - Calls the LLM service /generate endpoint
+    Stateless analysis: just call the LLM service and return its structured result.
+    No DB write.
     """
-    prompt = (
-        "You are TraderMind OS, a trading psychology assistant.\n"
-        f"User said: {req.message}"
-    )
-
-    llm_url = get_llm_url()
-
-    async with httpx.AsyncClient() as client:
-        llm_response = await client.post(
-            f"{llm_url}/generate",
-            json={"prompt": prompt},
-            timeout=10.0,
-        )
-
-    llm_response.raise_for_status()
-    data = llm_response.json()
-
-    return ChatResponse(response=data.get("response", "No response from LLM service"))
+    analysis = await call_llm_for_analysis(req)
+    return analysis
 
 
-@app.post("/journal/analyze", response_model=JournalAnalysisResponse)
-async def analyze_journal(req: JournalAnalysisRequest):
-    """
-    Orchestrator-level journal analysis.
-
-    Right now this just forwards the request to the LLM Service
-    /journal/analyze endpoint.
-    """
-    llm_url = get_llm_url()
-
-    async with httpx.AsyncClient() as client:
-        llm_response = await client.post(
-            f"{llm_url}/journal/analyze",
-            json=req.model_dump(),
-            timeout=10.0,
-        )
-
-    llm_response.raise_for_status()
-    data = llm_response.json()
-
-    return JournalAnalysisResponse(**data)
-
-
-@app.post("/journal/save", response_model=JournalEntryOut)
-async def analyze_and_save_journal(
-    req: JournalAnalysisRequest,
-    db: Session = Depends(get_db),
+@app.post("/journal/save", response_model=JournalEntryResponse)
+async def save_journal(
+    req: JournalAnalyzeRequest, db: Session = Depends(get_db)
 ):
     """
-    Analyze a journal entry using the LLM service,
-    then store the result in the database.
+    Analyze a journal entry via LLM and persist it to SQLite.
     """
-    llm_url = get_llm_url()
+    analysis = await call_llm_for_analysis(req)
 
-    async with httpx.AsyncClient() as client:
-        llm_response = await client.post(
-            f"{llm_url}/journal/analyze",
-            json=req.model_dump(),
-            timeout=10.0,
-        )
-
-    llm_response.raise_for_status()
-    data = llm_response.json()
-
-    analysis = JournalAnalysisResponse(**data)
-
-    # Store in DB (lists are JSON-encoded as TEXT)
-    db_entry = JournalEntry(
+    entry = JournalEntry(
         text=req.text,
-        emotions=json.dumps(analysis.emotions),
-        rules_broken=json.dumps(analysis.rules_broken),
-        biases=json.dumps(analysis.biases),
-        advice=analysis.advice,
-    )
-    db.add(db_entry)
-    db.commit()
-    db.refresh(db_entry)
-
-    return JournalEntryOut(
-        id=db_entry.id,
-        text=db_entry.text,
+        context=req.context,
         emotions=analysis.emotions,
         rules_broken=analysis.rules_broken,
         biases=analysis.biases,
         advice=analysis.advice,
-        created_at=db_entry.created_at,
+    )
+
+    try:
+        db.add(entry)
+        db.commit()
+        db.refresh(entry)
+    except Exception as e:
+        db.rollback()
+        # If saving fails, still return analysis instead of crashing everything
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error while saving journal entry: {e}",
+        ) from e
+
+    return JournalEntryResponse(
+        id=entry.id,
+        text=entry.text,
+        context=entry.context,
+        emotions=entry.emotions,
+        rules_broken=entry.rules_broken,
+        biases=entry.biases,
+        advice=entry.advice,
+        created_at=entry.created_at,
     )
 
 
-@app.get("/journal", response_model=List[JournalEntryListItem])
-def list_journal_entries(
-    limit: int = 20,
+@app.get("/journal", response_model=List[JournalEntryResponse])
+async def list_journals(
+    limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
     """
-    List the most recent journal entries.
+    List latest journal entries, newest first.
     """
     entries = (
         db.query(JournalEntry)
-        .order_by(JournalEntry.created_at.desc())
+        .order_by(desc(JournalEntry.created_at))
         .limit(limit)
         .all()
     )
 
-    result: List[JournalEntryListItem] = []
-    for e in entries:
-        try:
-            emotions = json.loads(e.emotions)
-        except Exception:
-            emotions = []
-
-        result.append(
-            JournalEntryListItem(
-                id=e.id,
-                text=e.text,
-                emotions=emotions,
-                created_at=e.created_at,
-            )
+    return [
+        JournalEntryResponse(
+            id=e.id,
+            text=e.text,
+            context=e.context,
+            emotions=e.emotions,
+            rules_broken=e.rules_broken,
+            biases=e.biases,
+            advice=e.advice,
+            created_at=e.created_at,
         )
-
-    return result
+        for e in entries
+    ]
