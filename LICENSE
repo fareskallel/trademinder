@@ -1,17 +1,40 @@
-Business Source License 1.1
+Business Source License 1.1 (BUSL-1.1)
 
 Parameters
-Licensor:        Fares Kallel
-Licensed Work:   MindTrader OS
-Additional Use Grant: You may make non-commercial use of the Licensed Work.
-Change Date:     2029-01-01 (4 years from now)
-Change License:  Apache License, Version 2.0
+-----------
+Licensor:      Fares Kallel
+Licensed Work: MindTrader OS (the “Licensed Work”)
+Additional Use Grant: You may make any non-commercial use of the Licensed Work.
+Change Date:   2029-01-01
+Change License: Apache License, Version 2.0
 
 Terms
-The Licensor hereby grants you the right to copy, modify, create derivative works, redistribute, and make non-production use of the Licensed Work. 
+------
+The Licensor hereby grants you the right to copy, modify, create derivative works,
+redistribute, and make non-production use of the Licensed Work. 
 
-Commercial use of the Licensed Work, including providing the Licensed Work to others as a service, is strictly prohibited without a separate, written commercial license from the Licensor.
+Any use of the Licensed Work for a Production Use or other Commercial Purpose
+is strictly prohibited except with the Licensor’s prior written consent.
 
-After the Change Date, the Change License will apply.
+After the Change Date, the Change License will apply to the Licensed Work.
 
-THE LICENSED WORK IS PROVIDED “AS IS” WITHOUT WARRANTIES OF ANY KIND.
+Definitions
+-----------
+“Commercial Purpose” means making the Licensed Work available to others, 
+selling access to it, using it to provide a commercial service, or using it 
+within any product or service offered commercially.
+
+“Production Use” means using the Licensed Work in any way that is part of 
+a live application, service, or product workflow, whether internal or external.
+
+Attribution
+-----------
+If you distribute or publicly use any unmodified or modified version of the 
+Licensed Work, you must include this License and provide attribution to the Licensor.
+
+Disclaimer
+-----------
+THE LICENSED WORK IS PROVIDED “AS IS”, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY WARRANTIES OF TITLE, 
+NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+
