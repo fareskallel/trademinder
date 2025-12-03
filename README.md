@@ -1,91 +1,60 @@
-# TraderMind OS
+🚀 MindTrader OS
+AI-Powered Trading Discipline & Psychology Assistant
 
-TraderMind OS is a multi-service, AI-powered platform designed to improve trader discipline, psychology, risk management, and long-term consistency.
+MindTrader OS is an AI-driven platform designed to help traders improve discipline, control emotions, and make better decisions through intelligent journaling and psychological insights.
 
-It acts as an operating system for trading behavior and analysis, built with a modern backend architecture (Python microservices, FastAPI, Postgres, Docker, Kubernetes) and a React frontend.
+🧠 Purpose
 
-## Project Scope
+Most traders don’t fail because of their strategy —
+they fail because of emotions, impulsiveness, and lack of consistency.
 
-TraderMind OS will include:
+MindTrader OS exists to change that.
 
-- Risk management analysis  
-- Trading journal ingestion (text, CSV, PDF)  
-- Psychology insights and emotional pattern detection  
-- Funding challenge tracking (daily loss, max loss, rule compliance)  
-- Setup and behavior analytics  
-- Backtest and broker statement import  
-- PnL aggregation and tax-friendly summaries  
-- AI-generated coaching and weekly reflections  
-- Trading plan builder and rule enforcement  
+It helps traders:
 
-## Repository Structure
+Understand their emotional patterns
 
-```
-backend/          # Python microservices
-  gateway/
-  orchestrator/
-  llm_service/
-  parser_service/
-  analytics_service/
-  persistence/
+Identify biases and psychological triggers
 
-frontend/         # React + TypeScript UI
+Reflect on trades through guided AI feedback
 
-deploy/           # Docker Compose + Kubernetes manifests
+Build discipline and better decision-making habits
 
-docs/             # Design documents and blueprint
-  tradermind_os_blueprint.md
-```
+Become more consistent and self-aware over time
 
-## Documentation
+This is your personal trading mind coach.
 
-Full architecture and project blueprint is located at:
+🎯 Vision
 
-`docs/tradermind_os_blueprint.md`
+To build an AI system that helps traders master their psychology, eliminate emotional mistakes, and develop the discipline required for long-term success.
 
-It includes:
+MindTrader OS blends intelligent journaling, behavioral analysis, and AI coaching into a single experience.
+It focuses on the human side of trading — the part most tools ignore.
 
-- System architecture diagrams  
-- Microservice and agent responsibilities  
-- Data model design  
-- Infrastructure plan  
-- Roadmap (3 months)  
-- MVP definition and sprint plan  
+💡 What It Does
 
-## Tech Stack
+AI-enhanced journaling: Write freely, and the AI extracts emotions, biases, rule violations, and lessons.
 
-### Backend
-- Python  
-- FastAPI  
-- Postgres  
-- Background workers  
-- Microservice structure  
-- Local LLM service (or pluggable models)  
+Behavioral insights: Track patterns such as fear, FOMO, overconfidence, hesitation, revenge trading, and more.
 
-### Frontend
-- React  
-- TypeScript  
+Personalized guidance: Receive structured analysis and feedback tailored to your state of mind and trading behavior.
 
-### Infrastructure
-- Docker  
-- Docker Compose  
-- Kubernetes (later)  
+Discipline reinforcement: Helps you stay consistent with routines, rules, and risk principles.
 
-## Project Goal
+MindTrader OS is not a trade analyzer — it is a mindset analyzer.
 
-Build a production-grade trading psychology and analytics platform while learning:
+📘 Philosophy
 
-- backend architecture  
-- microservices  
-- data modeling  
-- Docker  
-- Kubernetes  
-- API design  
-- AI agent integration  
-- FE/BE communication  
+Trading is 20% strategy, 80% psychology.
+Yet every tool in the industry focuses only on charts, PnL, imports, and statistics.
 
-TraderMind OS is both a real product and a complete backend engineering learning journey.
+MindTrader OS takes a different approach:
 
-## License
+Instead of analyzing the market, we analyze the trader.
+Because when you understand your mind, your performance follows.
+
+🔐 License
+
 This project is released under the Business Source License 1.1 (BUSL-1.1).
-Commercial use is prohibited without a written license from the author.
+Commercial use is prohibited without a written agreement.
+See the LICENSE file for details.
