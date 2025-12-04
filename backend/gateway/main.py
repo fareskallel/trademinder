@@ -1,18 +1,25 @@
-from typing import List, Optional
 import os
+from typing import List, Optional, Dict, Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from config import settings
+
+
+# ---------------------------------------------------------
+# FastAPI App
+# ---------------------------------------------------------
 
 app = FastAPI(
     title="TraderMind Gateway",
     description="Public API gateway for TraderMind OS.",
     version="0.3.0",
 )
+
 
 # ---------------------------------------------------------
 # CORS
@@ -28,106 +35,81 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
-# Models (mirror orchestrator)
-# ---------------------------------------------------------
-
-
-class FeedbackAnalyzeRequest(BaseModel):
-    text: str
-    context: Optional[str] = None
-
-
-class FeedbackAnalysis(BaseModel):
-    emotions: List[str]
-    rules_broken: List[str]
-    biases: List[str]
-    advice: str
-
-
-class FeedbackEntryResponse(BaseModel):
-    id: int
-    text: str
-    context: Optional[str]
-    emotions: List[str]
-    rules_broken: List[str]
-    biases: List[str]
-    advice: str
-    created_at: str  # orchestrator sends ISO datetime; keep as string here
-
 
 # ---------------------------------------------------------
-# Helper: orchestrator base URL
+# Orchestrator URL
 # ---------------------------------------------------------
 
 ORCH_BASE = f"http://{settings.orchestrator_host}:{settings.orchestrator_port}"
 
 
-async def _post_to_orchestrator(path: str, payload: dict) -> dict:
+# ---------------------------------------------------------
+# Helper: forward requests to orchestrator
+# ---------------------------------------------------------
+
+async def forward(request: Request, path: str) -> JSONResponse:
     url = f"{ORCH_BASE}{path}"
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    body = await request.body()
+
+    async with httpx.AsyncClient(timeout=40.0) as client:
         try:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
+            resp = await client.request(
+                request.method,
+                url,
+                content=body,
+                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                params=request.query_params,
+            )
+        except httpx.RequestError as e:
             raise HTTPException(
                 status_code=502,
-                detail=f"Error calling orchestrator at {url}: {e}",
-            ) from e
-    return resp.json()
+                detail=f"Orchestrator at {url} unreachable: {e}",
+            )
 
-
-async def _get_from_orchestrator(path: str, params: dict | None = None) -> list[dict]:
-    url = f"{ORCH_BASE}{path}"
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Error calling orchestrator at {url}: {e}",
-            ) from e
-    return resp.json()
+    content_type = resp.headers.get("content-type", "")
+    if content_type.startswith("application/json"):
+        return JSONResponse(status_code=resp.status_code, content=resp.json())
+    else:
+        return JSONResponse(status_code=resp.status_code, content=resp.text)
 
 
 # ---------------------------------------------------------
-# Routes
+# Health
 # ---------------------------------------------------------
-
 
 @app.get("/health")
 async def health():
-    return {
-        "status": "ok",
-        "service": "gateway",
-    }
+    return {"status": "ok", "service": "gateway"}
 
 
-@app.post("/feedback/analyze", response_model=FeedbackAnalysis)
-async def analyze_feedback(req: FeedbackAnalyzeRequest):
-    """
-    Public endpoint → forwards to orchestrator /feedback/analyze
-    (no DB write).
-    """
-    data = await _post_to_orchestrator("/feedback/analyze", req.dict())
-    return FeedbackAnalysis(**data)
+# ---------------------------------------------------------
+# FEEDBACK — Proxy
+# ---------------------------------------------------------
+
+@app.api_route("/feedback/analyze", methods=["POST"])
+async def gw_feedback_analyze(request: Request):
+    return await forward(request, "/feedback/analyze")
 
 
-@app.post("/feedback/save", response_model=FeedbackEntryResponse)
-async def save_feedback(req: FeedbackAnalyzeRequest):
-    """
-    Public endpoint → forwards to orchestrator /feedback/save
-    (LLM analysis + persist to DB).
-    """
-    data = await _post_to_orchestrator("/feedback/save", req.dict())
-    return FeedbackEntryResponse(**data)
+@app.api_route("/feedback/save", methods=["POST"])
+async def gw_feedback_save(request: Request):
+    return await forward(request, "/feedback/save")
 
 
-@app.get("/feedback", response_model=list[FeedbackEntryResponse])
-async def list_feedback(limit: int = Query(10, ge=1, le=100)):
-    """
-    Public endpoint → forwards to orchestrator /feedback?limit=N
-    """
-    data = await _get_from_orchestrator("/feedback", params={"limit": limit})
-    return [FeedbackEntryResponse(**item) for item in data]
+@app.api_route("/feedback", methods=["GET"])
+async def gw_feedback_list(request: Request):
+    return await forward(request, "/feedback")
+
+
+# ---------------------------------------------------------
+# RULES — Proxy (NEW)
+# ---------------------------------------------------------
+
+@app.api_route("/rules", methods=["GET", "POST"])
+async def gw_rules_root(request: Request):
+    return await forward(request, "/rules")
+
+
+@app.api_route("/rules/{subpath:path}", methods=["GET", "PUT", "PATCH", "DELETE"])
+async def gw_rules_subpath(request: Request, subpath: str):
+    return await forward(request, f"/rules/{subpath}")

@@ -3,12 +3,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """
-    Central configuration for the TraderMind backend.
+    Central configuration for TraderMind OS backend.
 
-    Values are loaded in this order:
-    - Defaults defined in the class
-    - Overridden by .env file
-    - Overridden by real environment variables (if set)
+    Load order:
+    - Defaults in this class
+    - .env file
+    - Real environment variables
     """
 
     # -----------------------------------------------------
@@ -21,7 +21,13 @@ class Settings(BaseSettings):
     # Orchestrator → Feedback Service
     # -----------------------------------------------------
     feedback_service_host: str = "127.0.0.1"
-    feedback_service_port: int = 8003  # choose any free port
+    feedback_service_port: int = 8003
+
+    # -----------------------------------------------------
+    # Orchestrator → Rules Service (NEW)
+    # -----------------------------------------------------
+    rules_service_host: str = "127.0.0.1"
+    rules_service_port: int = 8004
 
     # -----------------------------------------------------
     # Feedback Service → LLM Service
@@ -30,7 +36,7 @@ class Settings(BaseSettings):
     llm_port: int = 8002
 
     # -----------------------------------------------------
-    # Pydantic settings
+    # Pydantic Settings
     # -----------------------------------------------------
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -39,5 +45,4 @@ class Settings(BaseSettings):
     )
 
 
-# Single settings instance to import elsewhere
 settings = Settings()

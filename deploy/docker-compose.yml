@@ -11,7 +11,7 @@ services:
       - ORCHESTRATOR_HOST=orchestrator
       - ORCHESTRATOR_PORT=8001
     ports:
-      - "8000:8000"        # host:container
+      - "8000:8000"
     depends_on:
       - orchestrator
 
@@ -24,10 +24,13 @@ services:
     environment:
       - FEEDBACK_SERVICE_HOST=feedback_service
       - FEEDBACK_SERVICE_PORT=8000
+      - RULES_SERVICE_HOST=rules_service
+      - RULES_SERVICE_PORT=8000
     ports:
-      - "8001:8001"        # optional, for debugging
+      - "8001:8001"
     depends_on:
       - feedback_service
+      - rules_service
 
   feedback_service:
     build:
@@ -40,9 +43,22 @@ services:
       - LLM_PORT=8000
       - DATABASE_URL=sqlite:////app/trademind.db
     ports:
-      - "8003:8000"        # optional, for debugging (host 8003 → container 8000)
+      - "8003:8000"        # host 8003 → container 8000
     depends_on:
       - llm_service
+
+  rules_service:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: trademind_rules_service
+    command: uvicorn rules_service.main:app --host 0.0.0.0 --port 8000
+    environment:
+      - DATABASE_URL=sqlite:////app/trademind.db
+    ports:
+      - "8004:8000"        # host 8004 → container 8000
+    depends_on:
+      - feedback_service    # not required but ensures DB exists
 
   llm_service:
     build:
@@ -54,4 +70,4 @@ services:
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_MODEL=llama3.2
     ports:
-      - "8002:8000"        # host 8002 → LLM container 8000
+      - "8002:8000"
