@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   gateway:
     build:
@@ -41,9 +39,11 @@ services:
     environment:
       - LLM_HOST=llm_service
       - LLM_PORT=8000
-      - DATABASE_URL=sqlite:////app/trademind.db
+      - DATABASE_URL=sqlite:////app/data/trademind.db
+    volumes:
+      - trademind_db:/app/data
     ports:
-      - "8003:8000"        # host 8003 → container 8000
+      - "8003:8000"
     depends_on:
       - llm_service
 
@@ -54,11 +54,11 @@ services:
     container_name: trademind_rules_service
     command: uvicorn rules_service.main:app --host 0.0.0.0 --port 8000
     environment:
-      - DATABASE_URL=sqlite:////app/trademind.db
+      - DATABASE_URL=sqlite:////app/data/trademind.db
+    volumes:
+      - trademind_db:/app/data
     ports:
-      - "8004:8000"        # host 8004 → container 8000
-    depends_on:
-      - feedback_service    # not required but ensures DB exists
+      - "8004:8000"
 
   llm_service:
     build:
@@ -71,3 +71,6 @@ services:
       - OLLAMA_MODEL=llama3.2
     ports:
       - "8002:8000"
+
+volumes:
+  trademind_db:

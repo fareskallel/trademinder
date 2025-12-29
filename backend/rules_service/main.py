@@ -26,9 +26,9 @@ app = FastAPI(
 )
 
 
-@app.get("/")
-def healthcheck():
-    return {"status": "ok", "service": "rules"}
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "service": "rules_service"}
 
 app.include_router(rules_router.router)

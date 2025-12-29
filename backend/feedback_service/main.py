@@ -25,14 +25,15 @@ from config import settings
 app = FastAPI(
     title="TraderMind Feedback Service",
     description="Analyzes trading session text via LLM and stores structured feedback.",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 # ---------------------------------------------------------
 # DB setup (SQLite)
 # ---------------------------------------------------------
 
-DATABASE_URL = "sqlite:///./trademind.db"
+# Prefer env-configured DATABASE_URL if available (you set it in docker-compose)
+DATABASE_URL = getattr(settings, "database_url", None) or "sqlite:///./trademind.db"
 
 engine = create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False}
@@ -153,6 +154,19 @@ async def call_llm_for_analysis(
     )
 
 
+def _to_response(e: FeedbackEntry) -> FeedbackEntryResponse:
+    return FeedbackEntryResponse(
+        id=e.id,
+        text=e.text,
+        context=e.context,
+        emotions=e.emotions,
+        rules_broken=e.rules_broken,
+        biases=e.biases,
+        advice=e.advice,
+        created_at=e.created_at,
+    )
+
+
 # ---------------------------------------------------------
 # Routes
 # ---------------------------------------------------------
@@ -207,16 +221,7 @@ async def save_feedback(
             detail=f"Database error while saving feedback entry: {e}",
         ) from e
 
-    return FeedbackEntryResponse(
-        id=entry.id,
-        text=entry.text,
-        context=entry.context,
-        emotions=entry.emotions,
-        rules_broken=entry.rules_broken,
-        biases=entry.biases,
-        advice=entry.advice,
-        created_at=entry.created_at,
-    )
+    return _to_response(entry)
 
 
 @app.get("/feedback", response_model=List[FeedbackEntryResponse])
@@ -234,16 +239,21 @@ async def list_feedback(
         .all()
     )
 
-    return [
-        FeedbackEntryResponse(
-            id=e.id,
-            text=e.text,
-            context=e.context,
-            emotions=e.emotions,
-            rules_broken=e.rules_broken,
-            biases=e.biases,
-            advice=e.advice,
-            created_at=e.created_at,
+    return [_to_response(e) for e in entries]
+
+
+@app.get("/feedback/{entry_id}", response_model=FeedbackEntryResponse)
+async def get_feedback_entry(
+    entry_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Get a single feedback entry by id.
+    """
+    entry = db.query(FeedbackEntry).filter(FeedbackEntry.id == entry_id).first()
+    if not entry:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Feedback entry with id={entry_id} not found",
         )
-        for e in entries
-    ]
+    return _to_response(entry)

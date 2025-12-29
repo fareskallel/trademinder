@@ -15,8 +15,18 @@ type FeedbackEntry = {
 };
 
 type AnalyzeResponse = FeedbackEntry;
+
 type Theme = "light" | "dark";
 type ServiceKey = "home" | "session" | "journal" | "risk" | "llm";
+
+type TradingRule = {
+  id: number;
+  title: string;
+  description?: string | null;
+  category: string;
+  is_active: boolean;
+  created_at?: string;
+};
 
 const SERVICES: {
   key: ServiceKey;
@@ -41,15 +51,15 @@ const SERVICES: {
     key: "journal",
     label: "Journal Explorer",
     icon: "📓",
-    description: "Browse, search, and tag previous sessions.",
-    comingSoon: true,
+    description: "Review lessons and patterns from previous sessions.",
+    // now live → no comingSoon
   },
   {
     key: "risk",
     label: "Risk Rules",
     icon: "⚖️",
     description: "Define and monitor your risk management rules.",
-    comingSoon: true,
+    // live now → no comingSoon
   },
   {
     key: "llm",
@@ -61,20 +71,51 @@ const SERVICES: {
 ];
 
 function App() {
+  // ---- Session feedback state ----
   const [text, setText] = useState("");
   const [context, setContext] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<AnalyzeResponse | null>(null);
   const [entries, setEntries] = useState<FeedbackEntry[]>([]);
+
+  // ---- Lessons / Journal state ----
+  const [selectedLesson, setSelectedLesson] = useState<FeedbackEntry | null>(
+    null,
+  );
+  const [selectedLessonLoading, setSelectedLessonLoading] = useState(false);
+  const [selectedLessonError, setSelectedLessonError] = useState<
+    string | null
+  >(null);
+
+  // ---- Theme + navigation ----
   const [theme, setTheme] = useState<Theme>("light");
   const [activeService, setActiveService] = useState<ServiceKey>("home");
 
-  // Load recent feedback entries on mount
+  // ---- Risk rules state ----
+  const [rules, setRules] = useState<TradingRule[]>([]);
+  const [rulesLoading, setRulesLoading] = useState(false);
+  const [rulesError, setRulesError] = useState<string | null>(null);
+  const [showRuleEditor, setShowRuleEditor] = useState(false);
+
+  // New rule form state
+  const [ruleTitle, setRuleTitle] = useState("");
+  const [ruleDescription, setRuleDescription] = useState("");
+  const [ruleCategory, setRuleCategory] = useState("discipline");
+  const [ruleSubmitting, setRuleSubmitting] = useState(false);
+  const [ruleFormError, setRuleFormError] = useState<string | null>(null);
+
+  // -----------------------------
+  // Initial data loads
+  // -----------------------------
+
+  // Load recent feedback entries on mount (used for Home, Session, Journal)
   useEffect(() => {
     const fetchEntries = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/feedback?limit=10`);
+        const res = await fetch(
+          `${API_BASE_URL}/feedback?limit=50&offset=0`,
+        );
         if (!res.ok) {
           throw new Error(`Failed to fetch feedback: ${res.status}`);
         }
@@ -88,7 +129,7 @@ function App() {
     fetchEntries();
   }, []);
 
-  // Optional: read preferred theme from localStorage
+  // Load theme from localStorage
   useEffect(() => {
     const saved = window.localStorage.getItem("tm_theme") as Theme | null;
     if (saved === "light" || saved === "dark") {
@@ -101,7 +142,53 @@ function App() {
     window.localStorage.setItem("tm_theme", theme);
   }, [theme]);
 
-  const handleSubmit = async (e: FormEvent) => {
+  // Load rules when we first enter the Risk tab
+  useEffect(() => {
+    if (activeService !== "risk") return;
+    if (rules.length > 0) return;
+
+    const fetchRules = async () => {
+      setRulesLoading(true);
+      setRulesError(null);
+      try {
+        const res = await fetch(`${API_BASE_URL}/rules`);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Failed to fetch rules (${res.status}): ${text}`);
+        }
+        const data: TradingRule[] = await res.json();
+        setRules(data);
+      } catch (err: any) {
+        console.error(err);
+        setRulesError(err.message || "Failed to load rules");
+      } finally {
+        setRulesLoading(false);
+      }
+    };
+
+    fetchRules();
+  }, [activeService, rules.length]);
+
+  // When leaving Risk, hide the editor view
+  useEffect(() => {
+    if (activeService !== "risk") {
+      setShowRuleEditor(false);
+    }
+  }, [activeService]);
+
+  // When switching to Journal and there is at least one entry,
+  // auto-select the latest one if nothing is selected yet.
+  useEffect(() => {
+    if (activeService === "journal" && !selectedLesson && entries.length > 0) {
+      setSelectedLesson(entries[0]);
+    }
+  }, [activeService, entries, selectedLesson]);
+
+  // -----------------------------
+  // Session feedback handlers
+  // -----------------------------
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
 
@@ -134,6 +221,11 @@ function App() {
       // Prepend to entries list
       setEntries((prev) => [data, ...prev]);
 
+      // If we're in journal mode and nothing selected, select this new one
+      if (activeService === "journal" && !selectedLesson) {
+        setSelectedLesson(data);
+      }
+
       // Clear input
       setText("");
       setContext("");
@@ -145,13 +237,132 @@ function App() {
     }
   };
 
-  // ---- Theme palette ----
+  // -----------------------------
+  // Lessons / Journal handlers
+  // -----------------------------
+
+  const handleSelectLesson = async (entryId: number) => {
+    setSelectedLessonError(null);
+    setSelectedLessonLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/feedback/${entryId}`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Failed to load lesson (${res.status}): ${text}`);
+      }
+      const data: FeedbackEntry = await res.json();
+      setSelectedLesson(data);
+    } catch (err: any) {
+      console.error(err);
+      setSelectedLessonError(
+        err.message || "Failed to load lesson details",
+      );
+    } finally {
+      setSelectedLessonLoading(false);
+    }
+  };
+
+  // -----------------------------
+  // Risk rules handlers
+  // -----------------------------
+
+  const handleRuleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setRuleFormError(null);
+
+    if (!ruleTitle.trim()) {
+      setRuleFormError("Rule title is required.");
+      return;
+    }
+
+    setRuleSubmitting(true);
+    try {
+      const payload = {
+        title: ruleTitle.trim(),
+        description: ruleDescription.trim() || null,
+        category: ruleCategory || "discipline",
+        is_active: true,
+      };
+
+      const res = await fetch(`${API_BASE_URL}/rules`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Failed to create rule (${res.status}): ${text}`);
+      }
+
+      const created: TradingRule = await res.json();
+      setRules((prev) => [created, ...prev]);
+
+      // reset form
+      setRuleTitle("");
+      setRuleDescription("");
+      setRuleCategory("discipline");
+    } catch (err: any) {
+      console.error(err);
+      setRuleFormError(err.message || "Failed to create rule");
+    } finally {
+      setRuleSubmitting(false);
+    }
+  };
+
+  const handleToggleRule = async (rule: TradingRule) => {
+    setRulesError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/rules/${rule.id}/toggle`, {
+        method: "PATCH",
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Failed to toggle rule (${res.status}): ${text}`);
+      }
+
+      const updated: TradingRule = await res.json();
+      setRules((prev) =>
+        prev.map((r) => (r.id === updated.id ? updated : r)),
+      );
+    } catch (err: any) {
+      console.error(err);
+      setRulesError(err.message || "Failed to toggle rule");
+    }
+  };
+
+  const handleDeleteRule = async (rule: TradingRule) => {
+    setRulesError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/rules/${rule.id}`, {
+        method: "DELETE",
+      });
+
+      // 204 = deleted, 404 = already gone → both fine
+      if (!res.ok && res.status !== 204 && res.status !== 404) {
+        const text = await res.text();
+        throw new Error(`Failed to delete rule (${res.status}): ${text}`);
+      }
+
+      setRules((prev) => prev.filter((r) => r.id !== rule.id));
+    } catch (err: any) {
+      console.error(err);
+      setRulesError(err.message || "Failed to delete rule");
+    }
+  };
+
+  // -----------------------------
+  // Theme palette
+  // -----------------------------
+
   const colors =
     theme === "light"
       ? {
           pageBg: "#f3f4f6",
           shellBg: "#ffffff",
-          sidebarBg: "#ffffff",          // lighter sidebar in light mode
+          sidebarBg: "#ffffff",
           sidebarBorder: "#e5e7eb",
           sidebarText: "#111827",
           sidebarMuted: "#6b7280",
@@ -171,7 +382,7 @@ function App() {
       : {
           pageBg: "#020617",
           shellBg: "#020617",
-          sidebarBg: "#020617",          // deep dark sidebar in dark mode
+          sidebarBg: "#020617",
           sidebarBorder: "#1f2937",
           sidebarText: "#e5e7eb",
           sidebarMuted: "#6b7280",
@@ -189,7 +400,10 @@ function App() {
           chipBg: "#111827",
         };
 
-  // quick stats based on entries
+  // -----------------------------
+  // Derived stats
+  // -----------------------------
+
   const totalEntries = entries.length;
 
   const uniqueDaysCount = (() => {
@@ -227,10 +441,209 @@ function App() {
       : activeService === "session"
       ? "Write about your trading session, get structured feedback, and build awareness over time."
       : activeService === "journal"
-      ? "Soon you’ll be able to filter, tag, and review past sessions to spot patterns in your behaviour."
+      ? "Review all lessons generated from your feedback. Scroll through past entries and revisit emotions, rules broken, and advice."
       : activeService === "risk"
-      ? "Design your risk rules once, and let the system remind you when you’re about to break them."
+      ? "Your non-negotiable trading rules, always visible in front of you."
       : "A playground for prompts and future AI tools wired into your trading and journaling data.";
+
+  // -----------------------------
+  // Reusable render helpers
+  // -----------------------------
+
+  const renderRulesList = (compactHeader: boolean = false) => {
+    return (
+      <section
+        style={{
+          padding: "1rem",
+          borderRadius: "0.75rem",
+          border: `1px solid ${colors.border}`,
+          backgroundColor: colors.cardBg,
+          maxHeight: showRuleEditor ? "540px" : undefined,
+          overflowY: showRuleEditor ? "auto" : undefined,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: compactHeader ? "center" : "flex-start",
+            gap: "0.5rem",
+            marginBottom: "0.6rem",
+          }}
+        >
+          <h2
+            style={{
+              fontSize: "1.05rem",
+              fontWeight: 600,
+              margin: 0,
+            }}
+          >
+            Your trading rules
+          </h2>
+          {!compactHeader && (
+            <span
+              style={{
+                fontSize: "0.8rem",
+                color: colors.softer,
+              }}
+            >
+              {rules.length} rule{rules.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+
+        {rulesError && (
+          <div
+            style={{
+              marginBottom: "0.6rem",
+              color: "#fca5a5",
+              fontSize: "0.9rem",
+            }}
+          >
+            {rulesError}
+          </div>
+        )}
+
+        {rulesLoading ? (
+          <p style={{ color: colors.muted, fontSize: "0.95rem" }}>
+            Loading rules…
+          </p>
+        ) : rules.length === 0 ? (
+          <p style={{ color: colors.softer, fontSize: "0.95rem" }}>
+            You haven&apos;t defined any rules yet. Start with 2–3
+            non-negotiables that would instantly improve your discipline.
+          </p>
+        ) : (
+          <ul
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.7rem",
+            }}
+          >
+            {rules.map((rule) => (
+              <li
+                key={rule.id}
+                style={{
+                  padding: "0.75rem",
+                  borderRadius: "0.6rem",
+                  border: `1px solid ${colors.border}`,
+                  backgroundColor: colors.listItemBg,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.3rem",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.1rem",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        fontSize: "0.95rem",
+                        color: colors.text,
+                      }}
+                    >
+                      {rule.title}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "0.8rem",
+                        color: colors.softer,
+                      }}
+                    >
+                      {rule.category || "discipline"}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.78rem",
+                        padding: "0.15rem 0.5rem",
+                        borderRadius: "999px",
+                        border: `1px solid ${
+                          rule.is_active ? "#22c55e" : colors.border
+                        }`,
+                        color: rule.is_active ? "#22c55e" : colors.softer,
+                      }}
+                    >
+                      {rule.is_active ? "Active" : "Paused"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleRule(rule)}
+                      style={{
+                        fontSize: "0.78rem",
+                        padding: "0.15rem 0.5rem",
+                        borderRadius: "999px",
+                        border: `1px solid ${colors.border}`,
+                        backgroundColor: "transparent",
+                        color: colors.text,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {rule.is_active ? "Pause" : "Activate"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteRule(rule)}
+                      style={{
+                        fontSize: "0.78rem",
+                        padding: "0.15rem 0.5rem",
+                        borderRadius: "999px",
+                        border: `1px solid ${colors.border}`,
+                        backgroundColor: "transparent",
+                        color: "#f87171",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                {rule.description && (
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: "0.88rem",
+                      color: colors.muted,
+                    }}
+                  >
+                    {rule.description}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    );
+  };
+
+  // -----------------------------
+  // Render
+  // -----------------------------
 
   return (
     <>
@@ -356,7 +769,13 @@ function App() {
                 <button
                   key={service.key}
                   type="button"
-                  onClick={() => setActiveService(service.key)}
+                  onClick={() => {
+                    setActiveService(service.key);
+                    if (service.key !== "journal") {
+                      setSelectedLesson(null);
+                      setSelectedLessonError(null);
+                    }
+                  }}
                   title={service.description}
                   className="tm-sidebar-item"
                   style={{
@@ -422,8 +841,8 @@ function App() {
                 padding: "0.4rem 0.9rem",
                 borderRadius: "999px",
                 border: `1px solid ${colors.sidebarBorder}`,
-                backgroundColor: colors.sidebarBg,   // << THE FIX
-                color: colors.sidebarText,           // << ALWAYS CORRECT
+                backgroundColor: colors.sidebarBg,
+                color: colors.sidebarText,
                 fontSize: "0.8rem",
                 fontWeight: 500,
                 cursor: "pointer",
@@ -501,7 +920,7 @@ function App() {
                     : activeService === "session"
                     ? "Session feedback & mindset analysis"
                     : activeService === "journal"
-                    ? "Browse your trading journal"
+                    ? "Your library of trading lessons"
                     : activeService === "risk"
                     ? "Risk rule control center"
                     : "LLM lab for custom tools"}
@@ -1139,7 +1558,7 @@ function App() {
                               <span>
                                 {entry.created_at
                                   ? new Date(
-                                      entry.created_at
+                                      entry.created_at,
                                     ).toLocaleString()
                                   : ""}
                               </span>
@@ -1183,8 +1602,620 @@ function App() {
                   </section>
                 </div>
               </div>
+            ) : activeService === "journal" ? (
+              // ---- JOURNAL / LESSONS VIEW ----
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 2.3fr) minmax(0, 2.7fr)",
+                  gap: "1.5rem",
+                }}
+              >
+                {/* Left: list of lessons */}
+                <section
+                  style={{
+                    padding: "1rem",
+                    borderRadius: "0.75rem",
+                    border: `1px solid ${colors.border}`,
+                    backgroundColor: colors.cardBg,
+                    maxHeight: "560px",
+                    overflowY: "auto",
+                  }}
+                >
+                  <h2
+                    style={{
+                      fontSize: "1.05rem",
+                      fontWeight: 600,
+                      marginBottom: "0.4rem",
+                    }}
+                  >
+                    All lessons
+                  </h2>
+                  <p
+                    style={{
+                      marginTop: 0,
+                      marginBottom: "0.7rem",
+                      fontSize: "0.85rem",
+                      color: colors.softer,
+                    }}
+                  >
+                    Scroll through the AI feedback you&apos;ve received so far.
+                    Click a lesson to review it in detail.
+                  </p>
+
+                  {entries.length === 0 ? (
+                    <p
+                      style={{ color: colors.softer, fontSize: "0.95rem" }}
+                    >
+                      No lessons yet. Log a session in{" "}
+                      <strong>Session Feedback</strong> and they&apos;ll show
+                      up here.
+                    </p>
+                  ) : (
+                    <ul
+                      style={{
+                        listStyle: "none",
+                        padding: 0,
+                        margin: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.6rem",
+                      }}
+                    >
+                      {entries.map((entry) => {
+                        const isSelected =
+                          selectedLesson && selectedLesson.id === entry.id;
+                        const created =
+                          entry.created_at &&
+                          !isNaN(new Date(entry.created_at).getTime())
+                            ? new Date(entry.created_at).toLocaleString()
+                            : "";
+                        const preview =
+                          entry.text.length > 120
+                            ? entry.text.slice(0, 120) + "…"
+                            : entry.text;
+
+                        return (
+                          <li key={entry.id}>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectLesson(entry.id)}
+                              style={{
+                                width: "100%",
+                                textAlign: "left",
+                                padding: "0.7rem 0.75rem",
+                                borderRadius: "0.6rem",
+                                border: `1px solid ${
+                                  isSelected
+                                    ? colors.accent
+                                    : colors.border
+                                }`,
+                                backgroundColor: isSelected
+                                  ? theme === "light"
+                                    ? "#eff6ff"
+                                    : "#0b1120"
+                                  : colors.listItemBg,
+                                cursor: "pointer",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "0.25rem",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  gap: "0.5rem",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: "0.8rem",
+                                    color: colors.softer,
+                                  }}
+                                >
+                                  Lesson #{entry.id}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: "0.78rem",
+                                    color: colors.softer,
+                                  }}
+                                >
+                                  {created}
+                                </span>
+                              </div>
+                              {entry.context && (
+                                <div
+                                  style={{
+                                    fontSize: "0.8rem",
+                                    color: colors.softer,
+                                  }}
+                                >
+                                  <strong>Context:</strong> {entry.context}
+                                </div>
+                              )}
+                              <div
+                                style={{
+                                  fontSize: "0.9rem",
+                                  color: colors.text,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                }}
+                              >
+                                {preview}
+                              </div>
+                              {entry.emotions &&
+                                entry.emotions.length > 0 && (
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      flexWrap: "wrap",
+                                      gap: "0.3rem",
+                                      marginTop: "0.2rem",
+                                    }}
+                                  >
+                                    {entry.emotions.map((emo) => (
+                                      <span
+                                        key={emo}
+                                        style={{
+                                          fontSize: "0.75rem",
+                                          padding: "0.1rem 0.45rem",
+                                          borderRadius: "999px",
+                                          border: `1px solid ${colors.border}`,
+                                          backgroundColor: colors.chipBg,
+                                        }}
+                                      >
+                                        {emo}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
+
+                {/* Right: selected lesson detail */}
+                <section
+                  style={{
+                    padding: "1rem",
+                    borderRadius: "0.75rem",
+                    border: `1px solid ${colors.border}`,
+                    backgroundColor: colors.cardBg,
+                    minHeight: "240px",
+                  }}
+                >
+                  <h2
+                    style={{
+                      fontSize: "1.05rem",
+                      fontWeight: 600,
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    Lesson details
+                  </h2>
+
+                  {selectedLessonLoading ? (
+                    <p style={{ color: colors.muted, fontSize: "0.95rem" }}>
+                      Loading lesson…
+                    </p>
+                  ) : selectedLessonError ? (
+                    <p style={{ color: "#fca5a5", fontSize: "0.9rem" }}>
+                      {selectedLessonError}
+                    </p>
+                  ) : !selectedLesson ? (
+                    <p style={{ color: colors.softer, fontSize: "0.95rem" }}>
+                      Select a lesson from the left to see all details: emotions
+                      detected, rules broken, biases, and the advice the system
+                      gave you.
+                    </p>
+                  ) : (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.4rem",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "0.85rem",
+                          color: colors.softer,
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <span>Lesson #{selectedLesson.id}</span>
+                        <span>
+                          {selectedLesson.created_at &&
+                          !isNaN(
+                            new Date(
+                              selectedLesson.created_at,
+                            ).getTime(),
+                          )
+                            ? new Date(
+                                selectedLesson.created_at,
+                              ).toLocaleString()
+                            : ""}
+                        </span>
+                      </div>
+
+                      {selectedLesson.context && (
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.9rem",
+                            color: colors.muted,
+                          }}
+                        >
+                          <strong>Context:</strong> {selectedLesson.context}
+                        </p>
+                      )}
+
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: "0.95rem",
+                          color: colors.text,
+                        }}
+                      >
+                        <strong>Entry:</strong> {selectedLesson.text}
+                      </p>
+
+                      {selectedLesson.emotions &&
+                        selectedLesson.emotions.length > 0 && (
+                          <div
+                            style={{
+                              marginTop: "0.4rem",
+                              fontSize: "0.9rem",
+                              color: colors.text,
+                            }}
+                          >
+                            <strong>Emotions:</strong>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: "0.35rem",
+                                marginTop: "0.2rem",
+                              }}
+                            >
+                              {selectedLesson.emotions.map((emo) => (
+                                <span
+                                  key={emo}
+                                  style={{
+                                    fontSize: "0.78rem",
+                                    padding: "0.12rem 0.5rem",
+                                    borderRadius: "999px",
+                                    border: `1px solid ${colors.border}`,
+                                    backgroundColor: colors.chipBg,
+                                  }}
+                                >
+                                  {emo}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                      {selectedLesson.rules_broken &&
+                        selectedLesson.rules_broken.length > 0 && (
+                          <div
+                            style={{
+                              marginTop: "0.4rem",
+                              fontSize: "0.9rem",
+                              color: colors.text,
+                            }}
+                          >
+                            <strong>Rules broken:</strong>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: "0.35rem",
+                                marginTop: "0.2rem",
+                              }}
+                            >
+                              {selectedLesson.rules_broken.map((rule) => (
+                                <span
+                                  key={rule}
+                                  style={{
+                                    fontSize: "0.78rem",
+                                    padding: "0.12rem 0.5rem",
+                                    borderRadius: "999px",
+                                    border: `1px solid ${colors.border}`,
+                                    backgroundColor: colors.chipBg,
+                                  }}
+                                >
+                                  {rule}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                      {selectedLesson.biases &&
+                        selectedLesson.biases.length > 0 && (
+                          <div
+                            style={{
+                              marginTop: "0.4rem",
+                              fontSize: "0.9rem",
+                              color: colors.text,
+                            }}
+                          >
+                            <strong>Biases:</strong>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: "0.35rem",
+                                marginTop: "0.2rem",
+                              }}
+                            >
+                              {selectedLesson.biases.map((bias) => (
+                                <span
+                                  key={bias}
+                                  style={{
+                                    fontSize: "0.78rem",
+                                    padding: "0.12rem 0.5rem",
+                                    borderRadius: "999px",
+                                    border: `1px solid ${colors.border}`,
+                                    backgroundColor: colors.chipBg,
+                                  }}
+                                >
+                                  {bias}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                      <div
+                        style={{
+                          marginTop: "0.6rem",
+                          fontSize: "0.95rem",
+                          color: colors.text,
+                        }}
+                      >
+                        <strong>Advice:</strong>
+                        <p
+                          style={{
+                            marginTop: "0.25rem",
+                            marginBottom: 0,
+                            fontSize: "0.95rem",
+                            color: colors.text,
+                          }}
+                        >
+                          {selectedLesson.advice || "–"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+            ) : activeService === "risk" ? (
+              // ---- RISK RULES ----
+              <>
+                {/* Top right: mode toggle */}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    marginBottom: "1rem",
+                  }}
+                >
+                  {!showRuleEditor ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowRuleEditor(true)}
+                      style={{
+                        padding: "0.5rem 1.1rem",
+                        borderRadius: "999px",
+                        border: "none",
+                        backgroundColor: colors.accent,
+                        color: "white",
+                        fontSize: "0.9rem",
+                        fontWeight: 500,
+                        cursor: "pointer",
+                      }}
+                    >
+                      + New rule
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowRuleEditor(false)}
+                      style={{
+                        padding: "0.5rem 1.1rem",
+                        borderRadius: "999px",
+                        border: `1px solid ${colors.border}`,
+                        backgroundColor: "transparent",
+                        color: colors.text,
+                        fontSize: "0.9rem",
+                        fontWeight: 500,
+                        cursor: "pointer",
+                      }}
+                    >
+                      ⬅ Back to rules view
+                    </button>
+                  )}
+                </div>
+
+                {showRuleEditor ? (
+                  // Editor mode: form + rules side by side
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 2.4fr) minmax(0, 2.6fr)",
+                      gap: "1.5rem",
+                    }}
+                  >
+                    {/* Left: create rule form */}
+                    <section
+                      style={{
+                        padding: "1rem",
+                        borderRadius: "0.75rem",
+                        border: `1px solid ${colors.border}`,
+                        backgroundColor: colors.cardBg,
+                      }}
+                    >
+                      <h2
+                        style={{
+                          fontSize: "1.1rem",
+                          fontWeight: 600,
+                          marginBottom: "0.75rem",
+                        }}
+                      >
+                        Add a new trading rule
+                      </h2>
+                      <form onSubmit={handleRuleSubmit}>
+                        <label
+                          style={{
+                            display: "block",
+                            marginBottom: "0.25rem",
+                            fontWeight: 600,
+                            fontSize: "0.95rem",
+                          }}
+                        >
+                          Rule title
+                        </label>
+                        <input
+                          type="text"
+                          value={ruleTitle}
+                          onChange={(e) => setRuleTitle(e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "0.6rem",
+                            borderRadius: "0.5rem",
+                            border: `1px solid ${colors.border}`,
+                            marginBottom: "0.6rem",
+                            fontSize: "0.95rem",
+                            color: colors.text,
+                            backgroundColor:
+                              theme === "light" ? "#ffffff" : "#020617",
+                          }}
+                          placeholder='Example: "No trading after 6pm"'
+                        />
+
+                        <label
+                          style={{
+                            display: "block",
+                            marginBottom: "0.25rem",
+                            fontWeight: 600,
+                            fontSize: "0.95rem",
+                          }}
+                        >
+                          Description (optional)
+                        </label>
+                        <textarea
+                          value={ruleDescription}
+                          onChange={(e) =>
+                            setRuleDescription(e.target.value)
+                          }
+                          rows={3}
+                          style={{
+                            width: "100%",
+                            padding: "0.6rem",
+                            borderRadius: "0.5rem",
+                            border: `1px solid ${colors.border}`,
+                            marginBottom: "0.6rem",
+                            fontSize: "0.95rem",
+                            color: colors.text,
+                            backgroundColor:
+                              theme === "light" ? "#f9fafb" : "#020617",
+                          }}
+                          placeholder="Example: Only trade during my defined session window. After 6pm, the day is closed, no matter what."
+                        />
+
+                        <label
+                          style={{
+                            display: "block",
+                            marginBottom: "0.25rem",
+                            fontWeight: 600,
+                            fontSize: "0.95rem",
+                          }}
+                        >
+                          Category
+                        </label>
+                        <select
+                          value={ruleCategory}
+                          onChange={(e) => setRuleCategory(e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "0.55rem",
+                            borderRadius: "0.5rem",
+                            border: `1px solid ${colors.border}`,
+                            marginBottom: "0.6rem",
+                            fontSize: "0.9rem",
+                            color: colors.text,
+                            backgroundColor:
+                              theme === "light" ? "#ffffff" : "#020617",
+                          }}
+                        >
+                          <option value="discipline">Discipline</option>
+                          <option value="risk">Risk management</option>
+                          <option value="setup">Setup quality</option>
+                          <option value="lifestyle">Lifestyle</option>
+                        </select>
+
+                        {ruleFormError && (
+                          <div
+                            style={{
+                              marginBottom: "0.75rem",
+                              color: "#fca5a5",
+                              fontSize: "0.9rem",
+                            }}
+                          >
+                            {ruleFormError}
+                          </div>
+                        )}
+
+                        <button
+                          type="submit"
+                          disabled={ruleSubmitting}
+                          style={{
+                            padding: "0.6rem 1.3rem",
+                            borderRadius: "999px",
+                            border: "none",
+                            backgroundColor: ruleSubmitting
+                              ? colors.accentMuted
+                              : colors.accent,
+                            color: "white",
+                            fontWeight: 600,
+                            fontSize: "0.95rem",
+                            cursor: ruleSubmitting ? "default" : "pointer",
+                          }}
+                        >
+                          {ruleSubmitting ? "Saving..." : "Save rule"}
+                        </button>
+                      </form>
+                    </section>
+
+                    {/* Right: rules list */}
+                    {renderRulesList(true)}
+                  </div>
+                ) : (
+                  // Default mode: rules centered on the page
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <div style={{ width: "100%", maxWidth: "720px" }}>
+                      {renderRulesList(false)}
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
-              // ---- PLACEHOLDERS FOR FUTURE SERVICES ----
+              // ---- PLACEHOLDER FOR LLM (still coming soon) ----
               <section
                 style={{
                   padding: "1.25rem",
@@ -1218,8 +2249,6 @@ function App() {
                   already have — we&apos;ll plug in the{" "}
                   {activeService === "journal"
                     ? "journal explorer and filtering"
-                    : activeService === "risk"
-                    ? "risk rule configuration and real-time checks"
                     : "LLM orchestration layer for experiments and tools."}
                 </p>
                 <ul

@@ -4,6 +4,7 @@ from typing import Optional, Any, Dict, List
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import settings
@@ -139,11 +140,34 @@ async def save_feedback(req: FeedbackAnalyzeRequest):
 
 
 @app.get("/feedback", response_model=List[FeedbackEntryResponse])
-async def list_feedback(limit: int = Query(10, ge=1, le=100)):
+async def list_feedback(
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Proxy to feedback_service: list feedback entries, newest first.
+    Supports pagination via limit + offset.
+    """
     url = f"{FEEDBACK_BASE}/feedback"
-    resp = await _call_service("GET", url, params={"limit": limit})
+    resp = await _call_service(
+        "GET",
+        url,
+        params={"limit": limit, "offset": offset},
+    )
     _raise_on_error(resp)
     return [FeedbackEntryResponse(**item) for item in resp.json()]
+
+
+@app.get("/feedback/{entry_id}", response_model=FeedbackEntryResponse)
+async def get_feedback_entry(entry_id: int):
+    """
+    Proxy to feedback_service: fetch a single feedback entry by ID.
+    Used by the frontend Lessons detail view.
+    """
+    url = f"{FEEDBACK_BASE}/feedback/{entry_id}"
+    resp = await _call_service("GET", url)
+    _raise_on_error(resp)
+    return FeedbackEntryResponse(**resp.json())
 
 
 # ---------------------------------------------------------
@@ -191,10 +215,19 @@ async def orchestrator_update_rule(rule_id: int, rule: RuleUpdate):
 
 @app.delete("/rules/{rule_id}", status_code=204)
 async def orchestrator_delete_rule(rule_id: int):
+    """
+    Proxy: delete a rule in rules_service.
+    We normalize the response to 204 No Content for the gateway/frontend.
+    """
     url = f"{RULES_BASE}/rules/{rule_id}"
     resp = await _call_service("DELETE", url)
-    _raise_on_error(resp)
-    return None
+
+    # 204 = deleted, 404 = already gone → both acceptable
+    if resp.status_code not in (204, 404):
+        _raise_on_error(resp)
+
+    # Always respond with 204 and no body
+    return Response(status_code=204)
 
 
 @app.patch("/rules/{rule_id}/toggle", response_model=Dict[str, Any])

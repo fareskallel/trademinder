@@ -1,29 +1,17 @@
 import os
-from typing import List, Optional, Dict, Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 from config import settings
-
-
-# ---------------------------------------------------------
-# FastAPI App
-# ---------------------------------------------------------
 
 app = FastAPI(
     title="TraderMind Gateway",
     description="Public API gateway for TraderMind OS.",
-    version="0.3.0",
+    version="0.4.0",
 )
-
-
-# ---------------------------------------------------------
-# CORS
-# ---------------------------------------------------------
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
@@ -35,17 +23,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------
-# Orchestrator URL
-# ---------------------------------------------------------
-
 ORCH_BASE = f"http://{settings.orchestrator_host}:{settings.orchestrator_port}"
 
-
-# ---------------------------------------------------------
-# Helper: forward requests to orchestrator
-# ---------------------------------------------------------
 
 async def forward(request: Request, path: str) -> JSONResponse:
     url = f"{ORCH_BASE}{path}"
@@ -57,7 +36,11 @@ async def forward(request: Request, path: str) -> JSONResponse:
                 request.method,
                 url,
                 content=body,
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                headers={
+                    k: v
+                    for k, v in request.headers.items()
+                    if k.lower() != "host"
+                },
                 params=request.query_params,
             )
         except httpx.RequestError as e:
@@ -72,10 +55,6 @@ async def forward(request: Request, path: str) -> JSONResponse:
     else:
         return JSONResponse(status_code=resp.status_code, content=resp.text)
 
-
-# ---------------------------------------------------------
-# Health
-# ---------------------------------------------------------
 
 @app.get("/health")
 async def health():
@@ -101,8 +80,13 @@ async def gw_feedback_list(request: Request):
     return await forward(request, "/feedback")
 
 
+@app.api_route("/feedback/{entry_id}", methods=["GET"])
+async def gw_feedback_get(request: Request, entry_id: int):
+    return await forward(request, f"/feedback/{entry_id}")
+
+
 # ---------------------------------------------------------
-# RULES — Proxy (NEW)
+# RULES — Proxy
 # ---------------------------------------------------------
 
 @app.api_route("/rules", methods=["GET", "POST"])

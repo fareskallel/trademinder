@@ -13,7 +13,10 @@ class JournalEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     text = Column(Text, nullable=False)
 
-    # These will store JSON-encoded lists (as TEXT) for simplicity.
+    # NEW: optional context for the entry
+    context = Column(Text, nullable=True)
+
+    # These store JSON-encoded lists (as TEXT)
     emotions = Column(Text, nullable=False)
     rules_broken = Column(Text, nullable=False)
     biases = Column(Text, nullable=False)
